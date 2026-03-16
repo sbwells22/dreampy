@@ -15,23 +15,24 @@ moderation — validated to near-identical output against R dreamlet v1.8.0.
 
 ## Installation
 
-Requires Python ≥ 3.12.
+Requires Python ≥ 3.12. We recommend using conda to manage the
+environment, as one dependency (`scikit-misc`) has broken version
+metadata when installed via pip.
+
+**Recommended: conda environment**
 ```bash
 git clone https://github.com/sbwells22/dreampy.git
 cd dreampy
+conda env create -f env.yml
+conda activate dreampy
 pip install -e .
 ```
 
-`scikit-misc` is a required dependency that installs correctly via pip
-but reports broken version metadata. For a clean install, use conda:
+**Alternatively**, if you prefer to manage your own environment:
 ```bash
+git clone https://github.com/sbwells22/dreampy.git
+cd dreampy
 conda install -c conda-forge scikit-misc
-```
-
-Alternatively, create the full environment from the lock file:
-```bash
-conda env create -f env.lock.yml
-conda activate dreampy
 pip install -e .
 ```
 
@@ -78,7 +79,7 @@ The R validation arm is only needed to regenerate reference outputs.
 
 1. Create the conda environment (includes R and Python):
 ```bash
-   conda env create -f env.yml
+   conda env create -f envs/env.yml
    conda activate dreampy
 ```
 
