@@ -1,0 +1,21 @@
+preprocessing: 149.8 sec
+model_fitting: 168.2 sec
+total: 318.1 sec
+n_assays: 13
+
+per_assay_fitting:
+  cd3_gd: 6932 genes, 10.6 sec
+  cd4_cm: 10000 genes, 16.3 sec
+  cd4_naive: 9376 genes, 15.2 sec
+  cd4_tem: 7995 genes, 12.3 sec
+  cd4_temra: 5813 genes, 8.6 sec
+  cd4_treg: 8139 genes, 13.0 sec
+  cd4_trm: 9041 genes, 15.4 sec
+  cd8_cm: 5134 genes, 7.6 sec
+  cd8_mait: 5062 genes, 7.7 sec
+  cd8_naive: 8148 genes, 12.8 sec
+  cd8_tem: 7185 genes, 10.9 sec
+  cd8_temra: 7275 genes, 11.9 sec
+  cd8_trm: 8073 genes, 13.6 sec
+
+timestamp: 2026-03-07T12:19:10.957437

@@ -1,0 +1,17 @@
+,assay_fig,sig,logfc,cohort
+0,cMono,3905,255,Full cohort
+1,CD4,3643,179,Full cohort
+2,CD8,2841,209,Full cohort
+3,ncMono,1719,162,Full cohort
+4,B,1284,89,Full cohort
+5,NK,1093,67,Full cohort
+6,cDC,772,59,Full cohort
+7,pDC,132,57,Full cohort
+0,cMono,2084,263,-ImmVar
+1,CD4,1603,120,-ImmVar
+2,CD8,856,114,-ImmVar
+3,ncMono,821,186,-ImmVar
+4,NK,615,86,-ImmVar
+5,B,510,90,-ImmVar
+6,cDC,252,81,-ImmVar
+7,pDC,1,1,-ImmVar

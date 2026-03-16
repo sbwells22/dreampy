@@ -1,0 +1,5 @@
+processAssays: 84.011 sec
+dreamlet: 233.673 sec
+total: 317.684 sec
+cores: 16
+timestamp: 2026-03-05 21:22:50.799494

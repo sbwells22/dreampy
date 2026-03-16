@@ -1,0 +1,18 @@
+preprocessing: 215.1 sec
+model_fitting: 240.8 sec
+total: 455.9 sec
+n_assays: 10
+
+per_assay_fitting:
+  B: 6781 genes, 31.7 sec
+  NK: 5437 genes, 24.7 sec
+  PB: 1025 genes, 0.6 sec
+  Prolif: 3302 genes, 6.9 sec
+  T4: 8632 genes, 42.1 sec
+  T8: 8013 genes, 36.4 sec
+  cDC: 4253 genes, 15.1 sec
+  cM: 8728 genes, 39.8 sec
+  ncM: 5353 genes, 23.0 sec
+  pDC: 2102 genes, 3.8 sec
+
+timestamp: 2026-03-06T14:20:02.134687
