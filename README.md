@@ -23,7 +23,7 @@ metadata when installed via pip.
 ```bash
 git clone https://github.com/sbwells22/dreampy.git
 cd dreampy
-conda env create -f env.yml
+conda env create -f envs/env.yml
 conda activate dreampy
 pip install -e .
 ```
@@ -79,6 +79,7 @@ The R validation arm is only needed to regenerate reference outputs.
 
 1. Create the conda environment (includes R and Python):
 ```bash
+   # Uncomment the R section!
    conda env create -f envs/env.yml
    conda activate dreampy
 ```
