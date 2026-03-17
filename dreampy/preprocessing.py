@@ -1484,7 +1484,6 @@ def _log2cpm_array(
 
     # Augment counts with constant prior count to avoid log(0)
     # This matches limma/voom behavior: counts + 0.5 (constant, not library-scaled)
-    # See utilities.py augment_prior_count(..., scaled_by_lib=False)
     counts_aug = counts + prior_count
 
     # Transform to log2 CPM
