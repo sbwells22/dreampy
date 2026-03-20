@@ -92,9 +92,9 @@ def loess_auto(
         """
         Compute AICc or GCV criterion for a given span.
 
-        Matches R's fANCOVA::loess.as opt.span function exactly.
+        Numerically consistent with R's fANCOVA::loess.as opt.span.
         """
-        if span <= span_range[0] or span > span_range[1]:
+        if span < span_range[0] or span > span_range[1]:
             return np.inf
 
         try:
