@@ -2733,7 +2733,7 @@ def fit_models(
     weights: np.ndarray | None = None,
     gene_names: np.ndarray | None = None,
     assay_name: str | None = None,
-    reml: bool = False,
+    reml: bool = True,
     ddf: Literal["Satterthwaite", "Kenward-Roger", "adaptive"] | None = "adaptive",
     n_jobs: int = 1,
     backend: str = "loky",
@@ -2765,7 +2765,7 @@ def fit_models(
     assay_name : str, optional
         Name of assay/cell type. Stored in DEFit for multi-assay pipelines.
     reml : bool
-        Use REML estimation. Default: False (ML, matching dreamlet).
+        Use REML estimation. Default: True
     ddf : str, optional
         Denominator degrees of freedom method:
         - "Satterthwaite": df adjustment only (default)
