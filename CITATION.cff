@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "dreampy: Pseudobulk mixed-model differential expression for single-cell RNA-seq in Python"
+type: software
+authors:
+  - family-names: Wells
+    given-names: Steven B. Wells
+    orcid: https://orcid.org/0000-0001-5428-0683
+    affiliation: "Department of Clinical Neurosciences, University of Cambridge"
+  - family-names: Shahnawaz
+    given-names: Hamna
+    affiliation: "Department of Microbiology and Immunology, Columbia University Irving Medical Center, New York, NY, USA"
+  - family-names: Jones
+    given-names: Joanne L.
+    affiliation: "Department of Clinical Neurosciences, University of Cambridge"
+repository-code: "https://github.com/sbwells22/pydreamlet"
+license: MIT
+version: 0.1.0
+date-released: 2026-03-21
+keywords:
+  - single-cell RNA-seq
+  - differential expression
+  - pseudobulk
+  - linear mixed models
+  - Python
