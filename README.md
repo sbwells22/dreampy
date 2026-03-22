@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/1179158905.svg)](https://doi.org/10.5281/zenodo.19158589)
+
 # dreampy
 
 Pseudobulk mixed-model differential expression for single-cell RNA-seq,
