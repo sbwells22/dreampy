@@ -102,7 +102,8 @@ The R validation arm is only needed to regenerate reference outputs.
 
 If you use dreampy in your research, please cite:
 
-> Wells, S.B. et al. (2026). dreampy: ... *bioRxiv*. doi: ...
+> Wells, S. B., Shahnawaz, H., & Jones, J. L. (2026). dreampy: Pseudobulk mixed-model differential expression for single-cell RNA-seq in Python (p. 2026.03.21.713408). *bioRxiv*. https://doi.org/10.64898/2026.03.21.713408
+
 
 ## License
 
