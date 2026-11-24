@@ -44,6 +44,7 @@ Repository = "https://github.com/sbwells22/dreampy"
 Documentation = "https://github.com/sbwells22/dreampy#readme"
 
 [tool.setuptools]
+package-dir = {"" = "src"}
 packages = ["dreampy"]
 
 [tool.pytest.ini_options]
