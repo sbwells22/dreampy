@@ -226,3 +226,5 @@ validation/data/wells2025/cd4_tem*.csv
 validation/data/wells2025/cd4_trm*.csv
 
 validation/python/*.txt
+
+baseline_*.txt
