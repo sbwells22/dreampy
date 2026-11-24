@@ -1,95 +1,73 @@
 """
-dreampy: Differential Expression Analysis for Single-Cell RNA-seq
-=====================================================================
+dreampy: pseudobulk mixed-model differential expression in Python
+=================================================================
 
-A Python implementation of the dreamlet methodology for differential
-expression analysis of pseudobulk single-cell data.
+A Python port of the R dreamlet workflow for differential expression
+analysis of pseudobulk single-cell RNA-seq data.
 
-Quick Start
+Quick start
 -----------
+>>> import scanpy as sc
 >>> import dreampy as dp
 >>>
->>> # Tier 3: Multi-assay DE (easiest)
->>> pb = dp.aggregate_pseudobulk(adata, groupby=["celltype", "donor"])
->>> results = dp.de(pb, "~ disease + (1|donor)", assay_col="assays")
->>> dp.top_table(results, coef="disease", fdr_scope="global")
+>>> adata = sc.read_h5ad("my_data.h5ad")
 >>>
->>> # Tier 2: Single-assay DE
->>> pb = dp.aggregate_pseudobulk(adata, groupby=["donor"])
->>> fit = dp.de_assay(pb, "~ disease + (1|donor)")
->>> dp.top_table(fit, coef="disease")
+>>> # Pseudobulk aggregation; the first groupby column defines the assays
+>>> pb = dp.aggregate_pseudobulk(adata, groupby=["celltype", "donor_id", "site"])
 >>>
->>> # Tier 1: Granular control
->>> pb = dp.aggregate_pseudobulk(adata, groupby=["celltype", "donor"])
->>> pb = dp.filter_samples(pb, min_cells=5, min_samples=4)
->>> # ... subset to single assay ...
->>> counts = pb.X.T  # genes × samples
->>> lib_size = counts.sum(axis=0)
->>> norm_factors = dp.compute_tmm_factors(counts, lib_size)
->>> keep = dp.filter_by_expr(counts, lib_size, norm_factors)
->>> y = dp.log2cpm(counts[keep], lib_size, norm_factors)
->>> weights, trend = dp.estimate_weights(y, sigma, lib_size, norm_factors)
->>> fit = dp.fit_models(y, formula, pb.obs, weights=weights)
->>> fit = dp.eBayes(fit)
->>> dp.top_table(fit, coef="disease")
+>>> # Preprocessing
+>>> pb = dp.filter_samples(pb, min_cells=5, min_samples=3)
+>>> pb = dp.compute_tmm_factors(pb, assay_col="assays")
+>>> assays = dp.filter_by_expr(pb, assay_col="assays")  # dict: assay name -> AnnData
+>>>
+>>> # Differential expression, one assay (cell type) at a time
+>>> formula = "~ condition + (1|site)"
+>>> for name, assay_pb in assays.items():
+...     assay_pb = dp.log2cpm(assay_pb)
+...     assay_pb = dp.estimate_weights(assay_pb, formula=formula)
+...     fit = dp.fit_models(assay_pb, formula=formula)
+...     fit = dp.ebayes(fit)
+...     results = dp.get_results(fit, assay_name=name)
 
-API Reference
--------------
-Tier 1 (Granular):
-    aggregate_pseudobulk    Aggregate single-cell to pseudobulk
-    filter_samples          Filter samples by cell count
-    compute_tmm_factors     TMM normalization factors
-    filter_by_expr          Expression-based gene filtering
-    log2cpm                 Log2 CPM transformation
-    estimate_weights        Precision weight estimation
-    fit_models              Fit gene-wise models
-    eBayes                  Empirical Bayes moderation
+See ``notebooks/tutorial.ipynb`` for a complete walkthrough.
+
+Public API
+----------
+Pseudobulk:
+    aggregate_pseudobulk     Sum single-cell counts into pseudobulk samples
+
+Preprocessing:
+    filter_samples           Filter pseudobulk samples by cell count
+    compute_tmm_factors      TMM normalization factors
+    filter_by_expr           Expression-based gene filtering
+    log2cpm                  log2 counts-per-million transformation
+    estimate_weights         voom-style precision weights
+
+Model fitting:
+    fit_models               Fit gene-wise linear (mixed) models
+    fit_genes_parallel       Lower-level parallel fitting on prebuilt matrices
+    ebayes                   Empirical Bayes moderation
 
 Results:
-    top_table               Extract DE results as DataFrame
+    get_results              Results table for one fit
+    get_results_multi_assay  Combined results across assays, study-wide adjustment
 
-Contrasts:
-    make_contrasts          Create contrast matrix
-    contrasts_fit           Apply contrasts to fitted model
-
-Validation:
-    validate_formula        Check formula syntax and compatibility
+Formula:
+    Formula                  Formula parser
+    validate_formula         Check formula syntax and metadata compatibility
 
 Types:
-    DEFit                   Fitted model container
-    DEControl               Analysis parameters
+    DEFit                    Fitted model container
+    DEControl                Fitting configuration
+    FitStatus                Per-gene fit status codes
 """
 
 __version__ = "0.1.0"
 
-# =============================================================================
-# Types
-# =============================================================================
-from .de_types import (
-    DEControl,
-    DEFit,
-    FitStatus,
-)
-
-# Step 6: Empirical Bayes moderation
+from .de_types import DEControl, DEFit, FitStatus
 from .ebayes import ebayes
-
-# Step 5: Model fitting
-from .fitting import (
-    fit_genes_parallel,
-    fit_models,
-)
-
-# =============================================================================
-# Validation
-# =============================================================================
-from .formula import (
-    Formula,
-    validate_formula,
-)
-
-# Step 1-3: Preprocessing (including sample filtering)
-# Step 4: Weight estimation
+from .fitting import fit_genes_parallel, fit_models
+from .formula import Formula, validate_formula
 from .preprocessing import (
     compute_tmm_factors,
     estimate_weights,
@@ -97,53 +75,25 @@ from .preprocessing import (
     filter_samples,
     log2cpm,
 )
-
-# =============================================================================
-# Tier 1: Granular Components
-# =============================================================================
-# Step 0: Pseudobulk aggregation
 from .pseudobulk import aggregate_pseudobulk
-
-# =============================================================================
-# Results Interface
-# =============================================================================
 from .results import get_results, get_results_multi_assay
 
-# =============================================================================
-# Public API
-# =============================================================================
 __all__ = [
-    # Version
+    "DEControl",
+    "DEFit",
+    "FitStatus",
+    "Formula",
     "__version__",
-    # Tier 3
-    "de",
-    # Tier 2
-    "de_assay",
-    # Tier 1 - Pseudobulk
     "aggregate_pseudobulk",
-    # Tier 1 - Preprocessing
     "compute_tmm_factors",
+    "ebayes",
+    "estimate_weights",
     "filter_by_expr",
     "filter_samples",
-    "log2cpm",
-    "estimate_weights",
-    # Tier 1 - Fitting
-    "fit_models",
     "fit_genes_parallel",
-    # Tier 1 - Moderation
-    "ebayes",
-    # Results
+    "fit_models",
     "get_results",
     "get_results_multi_assay",
-    # Contrasts
-    "make_contrasts",
-    "contrasts_fit",
-    "validate_contrasts",
-    # Validation
-    "Formula",
+    "log2cpm",
     "validate_formula",
-    # Types
-    "DEFit",
-    "DEControl",
-    "FitStatus",
 ]

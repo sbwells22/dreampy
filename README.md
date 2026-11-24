@@ -27,7 +27,7 @@ git clone https://github.com/sbwells22/dreampy.git
 cd dreampy
 conda env create -f envs/env.yml
 conda activate dreampy
-pip install -e .
+pip install .
 ```
 
 **Alternatively**, if you prefer to manage your own environment:
@@ -35,6 +35,17 @@ pip install -e .
 git clone https://github.com/sbwells22/dreampy.git
 cd dreampy
 conda install -c conda-forge scikit-misc
+pip install .
+```
+
+After pulling a newer version of the repository, run `pip install .` again
+to update the installed package.
+
+**Development install**
+
+If you are modifying dreampy itself, install in editable mode so that
+changes to the source take effect without reinstalling:
+```bash
 pip install -e .
 ```
 
@@ -64,14 +75,14 @@ for name, assay_pb in assays.items():
     results = dp.get_results(fit_eb, assay_name=name)
 ```
 
-See [`notebooks/tutorial.py`](notebooks/tutorial.py) for a complete
+See [`notebooks/tutorial.ipynb`](notebooks/tutorial.ipynb) for a complete
 walkthrough with synthetic data included in the repository.
 
 ## Validation
 
 dreampy is validated against R dreamlet v1.8.0 on two published datasets
 (Wells 2025, Perez 2022) with Pearson r ≥ 0.999 for all pipeline
-quantities in assays with n ≥ 100 samples. See the [preprint]() for
+quantities in assays with n ≥ 100 samples. See the [preprint](https://doi.org/10.64898/2026.03.21.713408) for
 details.
 
 <details>
