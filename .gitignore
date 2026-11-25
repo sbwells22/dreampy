@@ -230,3 +230,4 @@ validation/python/*.txt
 baseline_*.txt
 
 test_scripts
+.DS_Store
