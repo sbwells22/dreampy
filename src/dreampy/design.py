@@ -13,8 +13,10 @@ Key Functions (Public):
 These are called BEFORE fitting models to ensure design matrix is full rank.
 """
 
+import difflib
 import re
 import warnings
+from collections.abc import Collection
 
 import numpy as np
 import pandas as pd
@@ -116,11 +118,16 @@ def drop_redundant_terms(
     formula: str,
     data: pd.DataFrame,
     tol: float = 1e-3,
+    reference_coded_terms: Collection[str] = (),
 ) -> tuple[str, list[str]]:
     """
     Drop redundant (collinear) terms from formula using correlation detection.
 
     Detects co-linear fixed effects and drops the last one in each pair.
+    Only columns that belong to different terms are compared. The indicator
+    columns of a single categorical term are never tested against each other:
+    the two indicators of a two-level factor in a no-intercept design have
+    correlation -1 by construction, which is not redundancy.
 
     Parameters
     ----------
@@ -131,6 +138,12 @@ def drop_redundant_terms(
     tol : float
         Tolerance for correlation = 1 detection (default 1e-3)
         Terms with |r| > 1 - tol are considered redundant
+    reference_coded_terms : Collection[str]
+        Categorical terms that must always be reference coded (first level
+        dropped), even in a no-intercept formula. clean_design_matrix() passes
+        the random effect grouping variables here, because it temporarily
+        lists them as fixed terms for this check and they must not be mistaken
+        for the first fixed factor.
 
     Returns
     -------
@@ -184,7 +197,9 @@ def drop_redundant_terms(
 
     # Build design matrix for fixed effects
     try:
-        X, col_names, col_to_term = _build_simple_design_matrix(fixed_terms, data)
+        X, col_names, col_to_term = _build_simple_design_matrix(
+            fixed_terms, data, reference_coded_terms=reference_coded_terms
+        )
     except (ValueError, TypeError) as e:
         # Can't build design matrix, return original
         warnings.warn(f"Could not build design matrix for redundancy check: {e}", stacklevel=2)
@@ -219,6 +234,10 @@ def drop_redundant_terms(
             continue
         for j in range(i + 1, len(col_names)):
             if not keep_cols[j]:
+                continue
+
+            # Columns of the same term are not compared with each other
+            if col_to_term[i] is not None and col_to_term[i] == col_to_term[j]:
                 continue
 
             r = corr_matrix[i, j]
@@ -631,7 +650,14 @@ def clean_design_matrix(
 
     # Step 2: Drop redundant terms - primarily for fixed effect collinearity
     # (RE collinearity already handled above at term level)
-    formula_step2, warnings2 = drop_redundant_terms(formula_step1, data, tol=corr_tol)
+    # The grouping variables are listed as fixed terms only for this check, so
+    # they are always reference coded, including in a no-intercept formula.
+    formula_step2, warnings2 = drop_redundant_terms(
+        formula_step1,
+        data,
+        tol=corr_tol,
+        reference_coded_terms=set(re_grouping_vars),
+    )
     all_warnings.extend(warnings2)
 
     # =========================================================================
@@ -796,16 +822,33 @@ def build_model_matrices(
     all_warnings : List[str]
         All cleaning warnings
 
+    Raises
+    ------
+    ValueError
+        If the formula contains a term that cannot be used: a variable that is
+        not a column of the metadata, an interaction, a transformation or
+        function call, removal of a term other than the intercept, or a random
+        effect other than a random intercept on a single metadata column.
+        Also if any variable used by the formula has missing values. Nothing
+        is dropped silently in either case.
+
     Notes
     -----
     The returned Z and block_sizes are constant for a given assay and should be
     passed to fit_lmm / fit_genes_parallel directly. They must NOT be rebuilt
     per gene.
+
+    The no-intercept forms '~ 0 + x', '~ -1 + x' and '~ x - 1' are equivalent.
     """
     from .formula import Formula
 
-    # Step 1: Clean formula and build X
+    # Step 0: Reject formulas and metadata that cannot be fitted as written.
+    # This runs before any cleaning, so that an unusable term raises an error
+    # here and is never skipped further down.
     formula_str = formula if isinstance(formula, str) else formula.original
+    formula_str = _validate_formula(formula_str, metadata)
+
+    # Step 1: Clean formula and build X
     formula_clean, X, coef_names, all_warnings = clean_design_matrix(
         formula_str,
         metadata,
@@ -860,6 +903,176 @@ def build_model_matrices(
 # =============================================================================
 
 
+# Matches a trailing "- 1" on a formula term, e.g. "disease - 1" or "-1".
+_TRAILING_MINUS_ONE = re.compile(r"(.*?)\s*-\s*1")
+
+# Matches a random effect term "(effect | group)".
+_RANDOM_EFFECT_TERM = re.compile(r"\(([^|]*)\|([^)]*)\)")
+
+
+def _has_top_level_minus(term: str) -> bool:
+    """True if the term contains a '-' that is not inside parentheses."""
+    depth = 0
+    for char in term:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "-" and depth == 0:
+            return True
+    return False
+
+
+def _describe_unusable_term(term: str, columns: list[str]) -> str:
+    """Explain why a fixed effect term that is not a metadata column cannot be used."""
+    if _has_top_level_minus(term):
+        return (
+            f"'{term}': removing a term with '-' is not supported. "
+            "Only '- 1' (no intercept) is recognised."
+        )
+    if "(" in term or ")" in term:
+        return (
+            f"'{term}': transformations and function calls are not supported. "
+            "Compute the transformed variable as a new metadata column and use that column."
+        )
+    if ":" in term or "*" in term:
+        return f"'{term}': interaction terms are not supported."
+    if "|" in term:
+        return f"'{term}': a random effect must be written in parentheses, for example '(1|donor)'."
+    if "/" in term or "^" in term or "%" in term:
+        return f"'{term}': the operators '/', '^' and '%in%' are not supported."
+
+    message = f"'{term}' is not a column in the metadata."
+    close = difflib.get_close_matches(term, columns, n=3, cutoff=0.6)
+    if close:
+        message += " Did you mean " + " or ".join(f"'{c}'" for c in close) + "?"
+    return message
+
+
+def _validate_formula(formula: str, data: pd.DataFrame) -> str:
+    """
+    Check that every term of a formula can be used, and normalise the formula.
+
+    A term is usable if it is an intercept control ('0', '1', '-1',
+    'intercept'), the name of a metadata column, or a random intercept
+    '(1|group)' whose grouping variable is a metadata column. Any other term
+    raises an error. Terms are never dropped.
+
+    A trailing '- 1' on a term, as in '~ disease - 1', suppresses the
+    intercept and is rewritten to the equivalent '~ 0 + disease'. A column
+    whose own name contains '-' is matched as a column first, so a column
+    called 'cell-type' is still usable.
+
+    Every variable used by the formula is then checked for missing values.
+
+    Parameters
+    ----------
+    formula : str
+        Formula string, with or without a left-hand side
+    data : pd.DataFrame
+        Sample metadata
+
+    Returns
+    -------
+    formula_normalised : str
+        The same model, with any intercept suppression written as a leading
+        '0'. Terms keep their original order.
+
+    Raises
+    ------
+    ValueError
+        If any term cannot be used. All unusable terms are reported together.
+    ValueError
+        If any variable used by the formula has missing values. All such
+        variables are reported together, with the number of samples affected.
+    """
+    formula_body = formula.strip()
+    if "~" in formula_body:
+        _, formula_body = formula_body.split("~", 1)
+        formula_body = formula_body.strip()
+
+    columns = [str(c) for c in data.columns]
+    column_set = set(columns)
+
+    suppress_intercept = False
+    kept_terms: list[str] = []
+    used_variables: list[str] = []
+    problems: list[str] = []
+
+    for raw_term in _split_formula_terms(formula_body):
+        term = raw_term.strip()
+
+        # Strip any trailing "- 1", unless what we have is itself a column name
+        while term not in column_set:
+            match = _TRAILING_MINUS_ONE.fullmatch(term)
+            if match is None:
+                break
+            suppress_intercept = True
+            term = match.group(1).strip()
+
+        if not term:
+            continue
+
+        if term == "0":
+            suppress_intercept = True
+            continue
+
+        if term in column_set:
+            kept_terms.append(term)
+            used_variables.append(term)
+            continue
+
+        if term == "1" or term.lower() == "intercept":
+            kept_terms.append(term)
+            continue
+
+        random_effect = _RANDOM_EFFECT_TERM.fullmatch(term)
+        if random_effect is not None:
+            effect = random_effect.group(1).strip()
+            group_var = random_effect.group(2).strip()
+            if effect != "1":
+                problems.append(
+                    f"'{term}': only random intercepts are supported, written '(1|{group_var})'. "
+                    "Random slopes are not implemented."
+                )
+            elif group_var not in column_set:
+                detail = _describe_unusable_term(group_var, columns)
+                problems.append(f"'{term}': the grouping variable cannot be used. {detail}")
+            else:
+                # Canonical spelling, so later steps see one form of the term
+                kept_terms.append(f"(1|{group_var})")
+                used_variables.append(group_var)
+            continue
+
+        problems.append(_describe_unusable_term(term, columns))
+
+    if problems:
+        raise ValueError(
+            f"Formula '{formula.strip()}' cannot be used:\n"
+            + "\n".join(f"  - {problem}" for problem in problems)
+            + f"\nAvailable metadata columns: {columns}"
+        )
+
+    # Missing values in any variable the formula uses
+    missing = []
+    for variable in dict.fromkeys(used_variables):  # unique, in formula order
+        n_missing = int(data[variable].isna().sum())
+        if n_missing > 0:
+            missing.append(f"'{variable}' ({n_missing} of {len(data)} samples)")
+    if missing:
+        raise ValueError(
+            "Missing values in metadata variables used by formula "
+            f"'{formula.strip()}': " + ", ".join(missing) + ". "
+            "Samples are not dropped automatically. Remove these samples from both the "
+            "expression data and the metadata, or fill in the values, before fitting."
+        )
+
+    all_terms = (["0"] if suppress_intercept else []) + kept_terms
+    if not all_terms:
+        return "~ 1"
+    return "~ " + " + ".join(all_terms)
+
+
 def _split_formula_terms(formula_body: str) -> list[str]:
     """
     Split formula body by + while respecting parentheses.
@@ -896,6 +1109,7 @@ def _split_formula_terms(formula_body: str) -> list[str]:
 def _build_simple_design_matrix(
     terms: list[str],
     data: pd.DataFrame,
+    reference_coded_terms: Collection[str] = (),
 ) -> tuple[np.ndarray, list[str], list[str | None]]:
     """
     Build design matrix from simple terms.
@@ -904,13 +1118,34 @@ def _build_simple_design_matrix(
     - '1' or 'intercept': explicit intercept request (default behavior)
     - '0' or '-1': suppress default intercept
     - Numeric variables: direct inclusion
-    - Categorical variables: dummy encoding (drop first)
+    - Categorical variables: indicator (dummy) encoding
 
-    Standard behavior (matching R/patsy):
+    Standard behavior (matching R's model.matrix):
     - Intercept is added by default unless '0' or '-1' is present
     - '~ x' is equivalent to '~ 1 + x'
     - '~ 0 + x' or '~ -1 + x' means no intercept
     - If both '0' and '1' appear, '0' wins (intercept suppressed)
+
+    Coding of categorical terms:
+    - With an intercept, every categorical term is reference coded: the first
+      level is dropped and absorbed into the intercept.
+    - Without an intercept, the first categorical term in the formula gets one
+      column per level, so each level has its own mean. Every later
+      categorical term is reference coded.
+    - Levels of a pandas Categorical that have no samples are removed before
+      coding, so the reference is always the first level that is observed.
+
+    Parameters
+    ----------
+    terms : List[str]
+        Fixed effect terms, e.g. ['0', 'disease', 'age']
+    data : pd.DataFrame
+        Metadata DataFrame
+    reference_coded_terms : Collection[str]
+        Categorical terms that are always reference coded, even when they are
+        the first categorical term of a no-intercept formula. Used for random
+        effect grouping variables that are temporarily listed as fixed terms
+        during collinearity checking.
 
     Returns
     -------
@@ -942,6 +1177,10 @@ def _build_simple_design_matrix(
         col_names.append("(Intercept)")
         col_to_term.append(None)
 
+    # Without an intercept, exactly one categorical term carries a column for
+    # every level. This flag is cleared once that term has been coded.
+    full_coding_pending = suppress_intercept
+
     for term in terms:
         term = term.strip()
 
@@ -960,8 +1199,18 @@ def _build_simple_design_matrix(
             col_names.append(term)
             col_to_term.append(term)
         else:
-            # Categorical - dummy encode (drop first level)
-            dummies = pd.get_dummies(col, prefix=term, drop_first=True)
+            # Categorical - indicator encode
+
+            # Remove levels with no samples, so that the reference level is
+            # the first level actually observed
+            if isinstance(col.dtype, pd.CategoricalDtype):
+                col = col.cat.remove_unused_categories()
+
+            use_full_coding = full_coding_pending and term not in reference_coded_terms
+            if use_full_coding:
+                full_coding_pending = False
+
+            dummies = pd.get_dummies(col, prefix=term, drop_first=not use_full_coding)
             for dummy_col in dummies.columns:
                 columns.append(dummies[dummy_col].values.astype(float))
                 col_names.append(dummy_col)

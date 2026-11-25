@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dreampy"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python implementation of dreamlet (validated against R dreamlet v1.8.0)"
 readme = "README.md"
 authors = [
@@ -44,6 +44,7 @@ Repository = "https://github.com/sbwells22/dreampy"
 Documentation = "https://github.com/sbwells22/dreampy#readme"
 
 [tool.setuptools]
+package-dir = {"" = "src"}
 packages = ["dreampy"]
 
 [tool.pytest.ini_options]
