@@ -62,7 +62,7 @@ Types:
     FitStatus                Per-gene fit status codes
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .de_types import DEControl, DEFit, FitStatus
 from .ebayes import ebayes
