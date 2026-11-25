@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.optimize import minimize_scalar
 from scipy.special import digamma, gammaln, polygamma
+from scipy.stats import norm
 from scipy.stats import t as t_dist
 
 # Import DEFit for type hints - use TYPE_CHECKING to allow forward reference
@@ -31,6 +32,11 @@ if TYPE_CHECKING:
 
 # Variance floor constant (matches limma behavior)
 VARIANCE_FLOOR_FACTOR = 1e-15  # Floor = VARIANCE_FLOOR_FACTOR * median(sigma^2)
+
+# Smallest p-value used when converting a t-statistic to a standardized z-score.
+# Matches variancePartition::topTable(), which applies pmax(P.Value, 1e-300)
+# before calling qnorm(). It caps |z_std| at about 37.07.
+_Z_STD_P_FLOOR = 1e-300
 
 __all__ = [
     "EBayesResult",
@@ -865,6 +871,11 @@ def _compute_z_std(
     """
     Convert t-statistics to standardized z-scores.
 
+    Each t-statistic is replaced by the standard normal quantile that has the
+    same two-sided p-value, keeping the sign of t. This puts statistics with
+    different degrees of freedom on one scale, so they can be compared across
+    genes, coefficients and assays.
+
     Parameters
     ----------
     t : np.ndarray
@@ -875,34 +886,36 @@ def _compute_z_std(
     Returns
     -------
     z : np.ndarray
-        (n_genes, n_coef) standardized z-scores
+        (n_genes, n_coef) standardized z-scores. NaN where t is NaN, or where
+        df is NaN, zero or negative.
 
     Notes
     -----
-    z = sign(t) * sqrt(df * (exp(t²/df) - 1))
+    p = 2 * P(T_df > |t|)
+    z = sign(t) * Phi^-1(1 - max(p, 1e-300) / 2)
 
-    This is the Wilson-Hilferty approximation that makes z-scores
-    comparable across genes with different df.
+    The floor on p prevents an infinite z when p underflows to zero, and caps
+    |z| at about 37.07. It is applied only inside this conversion; the
+    p-values reported elsewhere are not floored.
 
-    Reference: limma/R/ebayes.R::zscoreT
+    Reference: variancePartition/R/toptable.R, topTable() for MArrayLM2:
+        tab$P.Value <- pmax(tab$P.Value, 1e-300)
+        tab$z.std <- sign(tab$t) * qnorm(tab$P.Value / 2, lower.tail = FALSE)
     """
-    from scipy.stats import norm
+    t = np.asarray(t, dtype=np.float64)
+    df = np.asarray(df, dtype=np.float64)
 
-    n_genes, n_coef = t.shape
-    z = np.zeros_like(t)
+    # Degrees of freedom must be positive. NaN compares False, so it is excluded too.
+    valid_df = df > 0
+    df_safe = np.where(valid_df, df, 1.0)
 
-    for i in range(n_genes):
-        for j in range(n_coef):
-            if df[i, j] > 0:
-                # Convert t to p-value, then p-value to z
-                p = 2 * t_dist.sf(np.abs(t[i, j]), df=df[i, j])
-                # Avoid p = 0 or p = 1
-                p = np.clip(p, 1e-15, 1 - 1e-15)
-                z[i, j] = np.sign(t[i, j]) * (-norm.ppf(p / 2))
-            else:
-                z[i, j] = np.nan
+    # Two-sided p-value. A NaN in t propagates to p and then to z.
+    p = 2.0 * t_dist.sf(np.abs(t), df=df_safe)
+    p = np.maximum(p, _Z_STD_P_FLOOR)
 
-    return z
+    z = np.sign(t) * norm.isf(p / 2.0)
+
+    return np.where(valid_df, z, np.nan)
 
 
 def _compute_lods(
