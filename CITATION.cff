@@ -16,7 +16,7 @@ authors:
     affiliation: "Department of Clinical Neurosciences, University of Cambridge"
 repository-code: "https://github.com/sbwells22/dreampy"
 license: MIT
-version: 0.1.0
+version: 0.1.1
 date-released: 2026-11-25
 keywords:
   - single-cell RNA-seq
