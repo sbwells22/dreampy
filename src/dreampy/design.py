@@ -13,6 +13,7 @@ Key Functions (Public):
 These are called BEFORE fitting models to ensure design matrix is full rank.
 """
 
+import difflib
 import re
 import warnings
 from collections.abc import Collection
@@ -821,16 +822,33 @@ def build_model_matrices(
     all_warnings : List[str]
         All cleaning warnings
 
+    Raises
+    ------
+    ValueError
+        If the formula contains a term that cannot be used: a variable that is
+        not a column of the metadata, an interaction, a transformation or
+        function call, removal of a term other than the intercept, or a random
+        effect other than a random intercept on a single metadata column.
+        Also if any variable used by the formula has missing values. Nothing
+        is dropped silently in either case.
+
     Notes
     -----
     The returned Z and block_sizes are constant for a given assay and should be
     passed to fit_lmm / fit_genes_parallel directly. They must NOT be rebuilt
     per gene.
+
+    The no-intercept forms '~ 0 + x', '~ -1 + x' and '~ x - 1' are equivalent.
     """
     from .formula import Formula
 
-    # Step 1: Clean formula and build X
+    # Step 0: Reject formulas and metadata that cannot be fitted as written.
+    # This runs before any cleaning, so that an unusable term raises an error
+    # here and is never skipped further down.
     formula_str = formula if isinstance(formula, str) else formula.original
+    formula_str = _validate_formula(formula_str, metadata)
+
+    # Step 1: Clean formula and build X
     formula_clean, X, coef_names, all_warnings = clean_design_matrix(
         formula_str,
         metadata,
@@ -883,6 +901,176 @@ def build_model_matrices(
 # =============================================================================
 # Private helper functions
 # =============================================================================
+
+
+# Matches a trailing "- 1" on a formula term, e.g. "disease - 1" or "-1".
+_TRAILING_MINUS_ONE = re.compile(r"(.*?)\s*-\s*1")
+
+# Matches a random effect term "(effect | group)".
+_RANDOM_EFFECT_TERM = re.compile(r"\(([^|]*)\|([^)]*)\)")
+
+
+def _has_top_level_minus(term: str) -> bool:
+    """True if the term contains a '-' that is not inside parentheses."""
+    depth = 0
+    for char in term:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "-" and depth == 0:
+            return True
+    return False
+
+
+def _describe_unusable_term(term: str, columns: list[str]) -> str:
+    """Explain why a fixed effect term that is not a metadata column cannot be used."""
+    if _has_top_level_minus(term):
+        return (
+            f"'{term}': removing a term with '-' is not supported. "
+            "Only '- 1' (no intercept) is recognised."
+        )
+    if "(" in term or ")" in term:
+        return (
+            f"'{term}': transformations and function calls are not supported. "
+            "Compute the transformed variable as a new metadata column and use that column."
+        )
+    if ":" in term or "*" in term:
+        return f"'{term}': interaction terms are not supported."
+    if "|" in term:
+        return f"'{term}': a random effect must be written in parentheses, for example '(1|donor)'."
+    if "/" in term or "^" in term or "%" in term:
+        return f"'{term}': the operators '/', '^' and '%in%' are not supported."
+
+    message = f"'{term}' is not a column in the metadata."
+    close = difflib.get_close_matches(term, columns, n=3, cutoff=0.6)
+    if close:
+        message += " Did you mean " + " or ".join(f"'{c}'" for c in close) + "?"
+    return message
+
+
+def _validate_formula(formula: str, data: pd.DataFrame) -> str:
+    """
+    Check that every term of a formula can be used, and normalise the formula.
+
+    A term is usable if it is an intercept control ('0', '1', '-1',
+    'intercept'), the name of a metadata column, or a random intercept
+    '(1|group)' whose grouping variable is a metadata column. Any other term
+    raises an error. Terms are never dropped.
+
+    A trailing '- 1' on a term, as in '~ disease - 1', suppresses the
+    intercept and is rewritten to the equivalent '~ 0 + disease'. A column
+    whose own name contains '-' is matched as a column first, so a column
+    called 'cell-type' is still usable.
+
+    Every variable used by the formula is then checked for missing values.
+
+    Parameters
+    ----------
+    formula : str
+        Formula string, with or without a left-hand side
+    data : pd.DataFrame
+        Sample metadata
+
+    Returns
+    -------
+    formula_normalised : str
+        The same model, with any intercept suppression written as a leading
+        '0'. Terms keep their original order.
+
+    Raises
+    ------
+    ValueError
+        If any term cannot be used. All unusable terms are reported together.
+    ValueError
+        If any variable used by the formula has missing values. All such
+        variables are reported together, with the number of samples affected.
+    """
+    formula_body = formula.strip()
+    if "~" in formula_body:
+        _, formula_body = formula_body.split("~", 1)
+        formula_body = formula_body.strip()
+
+    columns = [str(c) for c in data.columns]
+    column_set = set(columns)
+
+    suppress_intercept = False
+    kept_terms: list[str] = []
+    used_variables: list[str] = []
+    problems: list[str] = []
+
+    for raw_term in _split_formula_terms(formula_body):
+        term = raw_term.strip()
+
+        # Strip any trailing "- 1", unless what we have is itself a column name
+        while term not in column_set:
+            match = _TRAILING_MINUS_ONE.fullmatch(term)
+            if match is None:
+                break
+            suppress_intercept = True
+            term = match.group(1).strip()
+
+        if not term:
+            continue
+
+        if term == "0":
+            suppress_intercept = True
+            continue
+
+        if term in column_set:
+            kept_terms.append(term)
+            used_variables.append(term)
+            continue
+
+        if term == "1" or term.lower() == "intercept":
+            kept_terms.append(term)
+            continue
+
+        random_effect = _RANDOM_EFFECT_TERM.fullmatch(term)
+        if random_effect is not None:
+            effect = random_effect.group(1).strip()
+            group_var = random_effect.group(2).strip()
+            if effect != "1":
+                problems.append(
+                    f"'{term}': only random intercepts are supported, written '(1|{group_var})'. "
+                    "Random slopes are not implemented."
+                )
+            elif group_var not in column_set:
+                detail = _describe_unusable_term(group_var, columns)
+                problems.append(f"'{term}': the grouping variable cannot be used. {detail}")
+            else:
+                # Canonical spelling, so later steps see one form of the term
+                kept_terms.append(f"(1|{group_var})")
+                used_variables.append(group_var)
+            continue
+
+        problems.append(_describe_unusable_term(term, columns))
+
+    if problems:
+        raise ValueError(
+            f"Formula '{formula.strip()}' cannot be used:\n"
+            + "\n".join(f"  - {problem}" for problem in problems)
+            + f"\nAvailable metadata columns: {columns}"
+        )
+
+    # Missing values in any variable the formula uses
+    missing = []
+    for variable in dict.fromkeys(used_variables):  # unique, in formula order
+        n_missing = int(data[variable].isna().sum())
+        if n_missing > 0:
+            missing.append(f"'{variable}' ({n_missing} of {len(data)} samples)")
+    if missing:
+        raise ValueError(
+            "Missing values in metadata variables used by formula "
+            f"'{formula.strip()}': " + ", ".join(missing) + ". "
+            "Samples are not dropped automatically. Remove these samples from both the "
+            "expression data and the metadata, or fill in the values, before fitting."
+        )
+
+    all_terms = (["0"] if suppress_intercept else []) + kept_terms
+    if not all_terms:
+        return "~ 1"
+    return "~ " + " + ".join(all_terms)
 
 
 def _split_formula_terms(formula_body: str) -> list[str]:
