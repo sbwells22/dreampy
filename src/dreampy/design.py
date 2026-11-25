@@ -15,6 +15,7 @@ These are called BEFORE fitting models to ensure design matrix is full rank.
 
 import re
 import warnings
+from collections.abc import Collection
 
 import numpy as np
 import pandas as pd
@@ -116,11 +117,16 @@ def drop_redundant_terms(
     formula: str,
     data: pd.DataFrame,
     tol: float = 1e-3,
+    reference_coded_terms: Collection[str] = (),
 ) -> tuple[str, list[str]]:
     """
     Drop redundant (collinear) terms from formula using correlation detection.
 
     Detects co-linear fixed effects and drops the last one in each pair.
+    Only columns that belong to different terms are compared. The indicator
+    columns of a single categorical term are never tested against each other:
+    the two indicators of a two-level factor in a no-intercept design have
+    correlation -1 by construction, which is not redundancy.
 
     Parameters
     ----------
@@ -131,6 +137,12 @@ def drop_redundant_terms(
     tol : float
         Tolerance for correlation = 1 detection (default 1e-3)
         Terms with |r| > 1 - tol are considered redundant
+    reference_coded_terms : Collection[str]
+        Categorical terms that must always be reference coded (first level
+        dropped), even in a no-intercept formula. clean_design_matrix() passes
+        the random effect grouping variables here, because it temporarily
+        lists them as fixed terms for this check and they must not be mistaken
+        for the first fixed factor.
 
     Returns
     -------
@@ -184,7 +196,9 @@ def drop_redundant_terms(
 
     # Build design matrix for fixed effects
     try:
-        X, col_names, col_to_term = _build_simple_design_matrix(fixed_terms, data)
+        X, col_names, col_to_term = _build_simple_design_matrix(
+            fixed_terms, data, reference_coded_terms=reference_coded_terms
+        )
     except (ValueError, TypeError) as e:
         # Can't build design matrix, return original
         warnings.warn(f"Could not build design matrix for redundancy check: {e}", stacklevel=2)
@@ -219,6 +233,10 @@ def drop_redundant_terms(
             continue
         for j in range(i + 1, len(col_names)):
             if not keep_cols[j]:
+                continue
+
+            # Columns of the same term are not compared with each other
+            if col_to_term[i] is not None and col_to_term[i] == col_to_term[j]:
                 continue
 
             r = corr_matrix[i, j]
@@ -631,7 +649,14 @@ def clean_design_matrix(
 
     # Step 2: Drop redundant terms - primarily for fixed effect collinearity
     # (RE collinearity already handled above at term level)
-    formula_step2, warnings2 = drop_redundant_terms(formula_step1, data, tol=corr_tol)
+    # The grouping variables are listed as fixed terms only for this check, so
+    # they are always reference coded, including in a no-intercept formula.
+    formula_step2, warnings2 = drop_redundant_terms(
+        formula_step1,
+        data,
+        tol=corr_tol,
+        reference_coded_terms=set(re_grouping_vars),
+    )
     all_warnings.extend(warnings2)
 
     # =========================================================================
@@ -896,6 +921,7 @@ def _split_formula_terms(formula_body: str) -> list[str]:
 def _build_simple_design_matrix(
     terms: list[str],
     data: pd.DataFrame,
+    reference_coded_terms: Collection[str] = (),
 ) -> tuple[np.ndarray, list[str], list[str | None]]:
     """
     Build design matrix from simple terms.
@@ -904,13 +930,34 @@ def _build_simple_design_matrix(
     - '1' or 'intercept': explicit intercept request (default behavior)
     - '0' or '-1': suppress default intercept
     - Numeric variables: direct inclusion
-    - Categorical variables: dummy encoding (drop first)
+    - Categorical variables: indicator (dummy) encoding
 
-    Standard behavior (matching R/patsy):
+    Standard behavior (matching R's model.matrix):
     - Intercept is added by default unless '0' or '-1' is present
     - '~ x' is equivalent to '~ 1 + x'
     - '~ 0 + x' or '~ -1 + x' means no intercept
     - If both '0' and '1' appear, '0' wins (intercept suppressed)
+
+    Coding of categorical terms:
+    - With an intercept, every categorical term is reference coded: the first
+      level is dropped and absorbed into the intercept.
+    - Without an intercept, the first categorical term in the formula gets one
+      column per level, so each level has its own mean. Every later
+      categorical term is reference coded.
+    - Levels of a pandas Categorical that have no samples are removed before
+      coding, so the reference is always the first level that is observed.
+
+    Parameters
+    ----------
+    terms : List[str]
+        Fixed effect terms, e.g. ['0', 'disease', 'age']
+    data : pd.DataFrame
+        Metadata DataFrame
+    reference_coded_terms : Collection[str]
+        Categorical terms that are always reference coded, even when they are
+        the first categorical term of a no-intercept formula. Used for random
+        effect grouping variables that are temporarily listed as fixed terms
+        during collinearity checking.
 
     Returns
     -------
@@ -942,6 +989,10 @@ def _build_simple_design_matrix(
         col_names.append("(Intercept)")
         col_to_term.append(None)
 
+    # Without an intercept, exactly one categorical term carries a column for
+    # every level. This flag is cleared once that term has been coded.
+    full_coding_pending = suppress_intercept
+
     for term in terms:
         term = term.strip()
 
@@ -960,8 +1011,18 @@ def _build_simple_design_matrix(
             col_names.append(term)
             col_to_term.append(term)
         else:
-            # Categorical - dummy encode (drop first level)
-            dummies = pd.get_dummies(col, prefix=term, drop_first=True)
+            # Categorical - indicator encode
+
+            # Remove levels with no samples, so that the reference level is
+            # the first level actually observed
+            if isinstance(col.dtype, pd.CategoricalDtype):
+                col = col.cat.remove_unused_categories()
+
+            use_full_coding = full_coding_pending and term not in reference_coded_terms
+            if use_full_coding:
+                full_coding_pending = False
+
+            dummies = pd.get_dummies(col, prefix=term, drop_first=not use_full_coding)
             for dummy_col in dummies.columns:
                 columns.append(dummies[dummy_col].values.astype(float))
                 col_names.append(dummy_col)
