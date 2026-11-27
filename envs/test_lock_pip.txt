@@ -1,0 +1,2 @@
+py-bobyqa==1.5.0
+scikit-misc==0.5.2

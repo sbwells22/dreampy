@@ -1,0 +1,33 @@
+# Test environment for dreampy.
+# Holds what the test suite needs and nothing else.
+# Versions are those of the environment that produced the 0.1.1 baseline
+# (143 passed at 183b054); see envs/env_0_1_1_baseline_export.yml.
+# Platform locks are generated from this file.
+name: dreampy-test
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.12.13
+  - pip
+
+  # Runtime
+  - numpy=2.4.2
+  - scipy=1.17.1
+  - pandas=2.3.3
+  - anndata=0.12.10
+  - joblib=1.5.3
+  - threadpoolctl=3.6.0
+  - tqdm=4.67.3
+
+  # Linear algebra: OpenBLAS on every platform, as in the baseline
+  - libblas=*=*openblas
+  - libopenblas=0.3.30
+
+  # Tests
+  - pytest=9.0.2
+
+  # From PyPI, as in the baseline environment
+  - pip:
+      - Py-BOBYQA==1.5.0
+      - scikit-misc==0.5.2
